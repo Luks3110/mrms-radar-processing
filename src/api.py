@@ -149,10 +149,9 @@ async def get_latest_radar(use_multi_elevation: bool = True):
             if timestamp is None:
                 raise HTTPException(status_code=500, detail="Failed to parse timestamp")
             
-            # Generate RALA composite
-            logger.info(f"Generating RALA composite from {len(elevation_files)} elevations")
-            rala_result = rala_generator.generate_rala(elevation_files)
-            metadata = rala_result["metadata"]
+            # Avoid generating full RALA here to reduce memory pressure.
+            # Use lightweight default bounds; detailed bounds are computed during image generation.
+            metadata = {"bounds": {"south": 20.005, "west": -129.995, "north": 54.995, "east": -60.005}}
             
         else:
             # Fallback to single elevation
@@ -179,9 +178,8 @@ async def get_latest_radar(use_multi_elevation: bool = True):
             if timestamp is None:
                 raise HTTPException(status_code=500, detail="Failed to parse timestamp")
             
-            # Generate RALA from single file
-            rala_result = rala_generator.generate_rala_single(latest_file)
-            metadata = rala_result["metadata"]
+            # Avoid generating full RALA here to reduce memory pressure.
+            metadata = {"bounds": {"south": 20.005, "west": -129.995, "north": 54.995, "east": -60.005}}
             
     except HTTPException:
         raise
@@ -206,14 +204,16 @@ async def get_radar_status():
     
     Returns information about the scheduler and last update.
     """
-    # scheduler = get_scheduler()  # Temporarily disabled for testing
-    # status = scheduler.get_status()
+    # Get live scheduler status
+    scheduler = get_scheduler()
+    status = scheduler.get_status()
     
     # Add latest cached timestamp
     latest_timestamp = get_latest_cached_timestamp(settings.cache_dir, elevation=0.50)
     
     return {
-        "scheduler": "disabled",  # status,
+        "scheduler": "running" if status.get("running") else "stopped",
+        "scheduler_details": status,
         "latest_data": latest_timestamp,
         "cache_dir": str(settings.cache_dir),
         "update_interval": settings.update_interval,
@@ -254,24 +254,11 @@ async def get_latest_overlay():
         if timestamp is None:
             raise HTTPException(status_code=500, detail="Failed to parse timestamp")
         
-        # Generate RALA to get metadata
-        logger.info(f"Generating RALA composite for overlay from {len(elevation_files)} elevations")
-        rala_result = rala_generator.generate_rala(elevation_files)
-        
         timestamp_str = format_timestamp(timestamp)
         
-        # Get bounds from converted coordinates (not metadata, which has unconverted values)
-        latitude = rala_result.get("latitude")
-        longitude = rala_result.get("longitude")
-        
-        if latitude is not None and longitude is not None:
-            bounds = [
-                [float(latitude.min()), float(longitude.min())],  # [south, west]
-                [float(latitude.max()), float(longitude.max())]   # [north, east]
-            ]
-        else:
-            # Fallback to CONUS bounds
-            bounds = [[20.005, -129.995], [54.995, -60.005]]
+        # Use lightweight static CONUS bounds here to avoid heavy array loads.
+        # The exact bounds for the image are derived during image generation.
+        bounds = [[20.005, -129.995], [54.995, -60.005]]
         
         return OverlayMetadata(
             timestamp=timestamp,
@@ -536,15 +523,22 @@ async def get_radar_data(timestamp: str):
     try:
         rala_result = rala_generator.generate_rala_single(file_path)
         
-        # Convert numpy array to list for JSON serialization
+        # Convert numpy array to list for JSON serialization (guarded)
         rala_data = rala_result["rala"]
-        
-        return JSONResponse({
+        shape = list(rala_data.shape)
+        total_elements = int(rala_data.size)
+        payload = {
             "timestamp": timestamp,
             "metadata": rala_result["metadata"],
-            "shape": list(rala_data.shape),
-            "data": rala_data.tolist(),  # Warning: very large!
-        })
+            "shape": shape,
+        }
+        # Only include raw data when under a safe threshold to avoid OOM
+        if total_elements <= 1_000_000:
+            payload["data"] = rala_data.tolist()
+        else:
+            payload["note"] = "Data omitted due to size; request image/overlay endpoints instead."
+        
+        return JSONResponse(payload)
         
     except Exception as e:
         logger.error(f"Failed to get radar data: {e}")

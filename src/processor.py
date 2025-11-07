@@ -85,6 +85,10 @@ class GRIB2Processor:
         
         # Extract data array
         data = reflectivity_var.values
+        # Ensure memory-efficient dtype
+        if data.dtype != np.float32:
+            # Cast to float32 to cut memory usage roughly in half
+            data = data.astype(np.float32, copy=False)
         
         # Get coordinate information
         if 'latitude' in dataset.coords and 'longitude' in dataset.coords:

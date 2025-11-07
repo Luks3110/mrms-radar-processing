@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import List, Dict, Any, Optional, Union, Tuple
 
 import numpy as np
+import gc
 from PIL import Image
 import matplotlib
 matplotlib.use('Agg')  # Use non-interactive backend for server
@@ -203,11 +204,12 @@ class RALAGenerator:
             )
         
         # Load all files
-        all_data = []
+        # Process files sequentially to minimize peak memory usage
         metadata = None
         dataset = None
         latitude = None
         longitude = None
+        rala: Optional[np.ndarray] = None
         
         for file_path in sorted_paths:
             processed = self.processor.process_file(file_path)
@@ -216,7 +218,6 @@ class RALAGenerator:
                 min_value=min_dbz,
                 max_value=max_dbz
             )
-            all_data.append(rala_data)
             
             if metadata is None:
                 metadata = processed["metadata"]
@@ -243,21 +244,24 @@ class RALAGenerator:
                     
                     # Convert longitude from 0-360 to -180-180 if needed (for Leaflet compatibility)
                     longitude = np.where(longitude > 180, longitude - 360, longitude)
-        
-        # Stack arrays: shape (n_elevations, nlat, nlon)
-        stacked = np.stack(all_data, axis=0)
-        
-        # For each grid point, select the lowest elevation with valid data
-        # We want the minimum index (lowest elevation) where data is not NaN
-        
-        # Create output array
-        rala = np.full(stacked.shape[1:], np.nan)
-        
-        # Iterate through elevations from lowest to highest
-        for i in range(stacked.shape[0]):
-            # Update RALA where we don't have data yet and current level is valid
-            mask = np.isnan(rala) & ~np.isnan(stacked[i])
-            rala[mask] = stacked[i][mask]
+            
+            # Initialize output with the first (lowest) elevation
+            if rala is None:
+                # Make an explicit float32 array for memory efficiency
+                rala = np.array(rala_data, dtype=np.float32, copy=True)
+            else:
+                # Fill only where we don't yet have data and current level is valid
+                # Avoid allocating large temporaries by using boolean masks
+                missing_mask = np.isnan(rala)
+                if np.any(missing_mask):
+                    valid_mask = ~np.isnan(rala_data)
+                    fill_mask = missing_mask & valid_mask
+                    if np.any(fill_mask):
+                        rala[fill_mask] = rala_data[fill_mask]
+            
+            # Proactively free memory for the current level before next iteration
+            del rala_data, processed
+            gc.collect()
         
         logger.info(f"RALA generation complete: "
                    f"{np.sum(~np.isnan(rala))} valid points")
