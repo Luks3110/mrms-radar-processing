@@ -1,0 +1,14 @@
+### Radar API Requests
+
+# Get latest processed radar data
+GET http://localhost:8000/api/radar/latest
+
+### Get radar data for specific timestamp
+# GET http://localhost:8000/api/radar/data/20251107-200036
+
+### List available radar data files
+# GET http://localhost:8000/api/radar/list?limit=24
+
+### Health check
+# GET http://localhost:8000/health
+
