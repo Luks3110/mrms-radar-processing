@@ -19,8 +19,7 @@ from .utils import (
     get_latest_cached_timestamp,
     get_latest_cached_files
 )
-# Temporarily disabled for testing
-# from .scheduler import start_scheduler, shutdown_scheduler, get_scheduler
+from .scheduler import start_scheduler, shutdown_scheduler, get_scheduler
 
 # Configure logging
 logging.basicConfig(
@@ -55,7 +54,7 @@ rala_generator = RALAGenerator()
 async def startup_event():
     """Initialize services on app startup."""
     logger.info("Starting up MRMS Radar API...")
-    # await start_scheduler()  # Temporarily disabled for testing
+    await start_scheduler()
     logger.info("Startup complete")
 
 
@@ -63,7 +62,7 @@ async def startup_event():
 async def shutdown_event():
     """Cleanup on app shutdown."""
     logger.info("Shutting down MRMS Radar API...")
-    # await shutdown_scheduler()  # Temporarily disabled for testing
+    await shutdown_scheduler()
     logger.info("Shutdown complete")
 
 
@@ -582,13 +581,28 @@ async def trigger_update():
     
     The scheduler will handle the actual download to avoid duplicates.
     """
-    # scheduler = get_scheduler()  # Temporarily disabled for testing
-    # # Trigger an immediate update
-    # import asyncio
-    # asyncio.create_task(scheduler.update_radar_data())
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    logger.info("📡 /api/radar/update endpoint called - Manual update triggered")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+    
+    scheduler = get_scheduler()
+    scheduler_status = scheduler.get_status()
+    
+    logger.info(f"Scheduler status: running={scheduler_status['running']}, "
+                f"update_in_progress={scheduler_status['update_in_progress']}")
+    
+    if scheduler_status['update_in_progress']:
+        logger.warning("⚠️  Update already in progress, creating task anyway (will be skipped by scheduler)")
+    
+    # Trigger an immediate update
+    import asyncio
+    task = asyncio.create_task(scheduler.update_radar_data())
+    logger.info(f"✅ Background task created: {task}")
+    logger.info("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n")
+    
     return {
-        "status": "Scheduler disabled",
-        "message": "Scheduler is temporarily disabled for testing."
+        "status": "Update triggered",
+        "message": "Background update started. Check /api/radar/status for progress."
     }
 
 
